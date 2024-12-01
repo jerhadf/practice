@@ -193,6 +193,46 @@ class TestBank(unittest.TestCase):
         for account in accounts.values():
             self.assertGreaterEqual(account.balance, 0)
 
-# Run tests in notebook
-test_suite = unittest.TestLoader().loadTestsFromTestCase(TestBank)
-unittest.TextTestRunner(verbosity=2).run(test_suite)
+    def test_transaction_logging(self):
+        # Test transaction logging
+        # Create test accounts
+        acc1 = self.bank.create_account("Alice", 1000)
+        acc2 = self.bank.create_account("Bob", 500)
+        acc3 = self.bank.create_account("Charlie", 2000)
+
+        # Test deposits
+        self.bank.deposit(acc1.account_id, 500)
+        self.bank.deposit(acc2.account_id, 300)
+
+        # Test withdrawals
+        self.bank.withdraw(acc1.account_id, 200)
+        self.bank.withdraw(acc3.account_id, 500)
+
+        # Test transfers
+        self.bank.transfer(acc1.account_id, acc2.account_id, 300)
+        self.bank.transfer(acc3.account_id, acc1.account_id, 400)
+
+        # Verify transaction logs
+        acc1 = self.bank.read_account(acc1.account_id)
+        acc2 = self.bank.read_account(acc2.account_id)
+        acc3 = self.bank.read_account(acc3.account_id)
+
+        # Verify account balances
+        self.assertEqual(acc1.balance, 1400)
+        self.assertEqual(acc2.balance, 1100)
+        self.assertEqual(acc3.balance, 1100)
+
+        # Verify transaction log lengths
+        self.assertEqual(len(acc1.transaction_log), 5)  # creation, deposit, withdrawal, transfer out, transfer in
+        self.assertEqual(len(acc2.transaction_log), 3)  # creation, deposit, transfer in
+        self.assertEqual(len(acc3.transaction_log), 3)  # creation, withdrawal, transfer out
+
+        # Test edge cases
+        with self.assertRaises(InsufficientFundsError):
+            self.bank.withdraw(acc1.account_id, 10000)  # Should fail - insufficient funds
+
+        with self.assertRaises(AccountNotFoundError):
+            self.bank.transfer(acc1.account_id, 999, 100)  # Should fail - nonexistent account
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

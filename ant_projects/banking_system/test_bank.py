@@ -1,9 +1,8 @@
-import unittest
 import threading
-import time
-import random
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from bank import Bank, AccountNotFoundError, InsufficientFundsError, TransactionKind
+import unittest
+
+from bank import AccountNotFoundError, Bank, InsufficientFundsError, TransactionKind
+
 
 class TestBank(unittest.TestCase):
     def setUp(self):
@@ -191,5 +190,6 @@ class TestBank(unittest.TestCase):
         self.assertEqual(log[1].balance_after, 1500.0)
         self.assertEqual(log[2].balance_after, 1300.0)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main(verbosity=2)

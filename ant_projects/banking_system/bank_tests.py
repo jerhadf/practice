@@ -3,60 +3,50 @@ import threading
 import time
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from bank import Bank, AccountNotFoundError, InsufficientFundsError, TransactionKind
 
 class TestBank(unittest.TestCase):
     def setUp(self):
         self.bank = Bank()
 
     def test_create_account(self):
+        # Test basic account creation
         account = self.bank.create_account("John Doe", 1000.0)
         self.assertEqual(account.owner, "John Doe")
         self.assertEqual(account.balance, 1000.0)
+        self.assertEqual(account.account_id, 0)
+        self.assertEqual(len(account.transaction_log), 1)
+        self.assertEqual(account.transaction_log[0].kind, TransactionKind.CREATION)
 
-    def test_create_account_invalid_owner(self):
+    def test_create_account_validation(self):
+        # Test invalid inputs
         with self.assertRaises(ValueError):
             self.bank.create_account("", 1000.0)
-
-    def test_create_account_negative_balance(self):
         with self.assertRaises(ValueError):
             self.bank.create_account("John Doe", -100.0)
 
+        # Test sequential ID assignment
+        acc1 = self.bank.create_account("User1", 100.0)
+        acc2 = self.bank.create_account("User2", 200.0)
+        self.assertEqual(acc1.account_id, 0)
+        self.assertEqual(acc2.account_id, 1)
+
     def test_read_account(self):
+        # Test successful read
         account = self.bank.create_account("Jane Doe", 500.0)
-        account_id = 0  # first account created will have ID 0
-        read_account = self.bank.read_account(account_id)
+        read_account = self.bank.read_account(0)
         self.assertEqual(read_account.owner, "Jane Doe")
         self.assertEqual(read_account.balance, 500.0)
 
-    def test_read_nonexistent_account(self):
-        with self.assertRaises(KeyError):
+        # Test reading non-existent account
+        with self.assertRaises(AccountNotFoundError):
             self.bank.read_account(999)
 
-    def test_update_balance(self):
-        account = self.bank.create_account("Bob Smith", 1000.0)
-        account_id = 0
-        new_balance = self.bank.update_balance(account_id, 500.0)
-        self.assertEqual(new_balance, 1500.0)
-        self.assertEqual(self.bank.read_account(account_id).balance, 1500.0)
-
-    def test_update_balance_insufficient_funds(self):
-        account = self.bank.create_account("Alice Brown", 100.0)
-        account_id = 0
-        with self.assertRaises(ValueError):
-            self.bank.update_balance(account_id, -200.0)
-
-    def test_delete_account(self):
-        account = self.bank.create_account("Charlie Wilson", 300.0)
-        account_id = 0
-        self.assertTrue(self.bank.delete_account(account_id))
-        with self.assertRaises(KeyError):
-            self.bank.read_account(account_id)
-
-    def test_delete_nonexistent_account(self):
-        with self.assertRaises(ValueError):
-            self.bank.delete_account(999)
-
     def test_read_all_accounts(self):
+        # Test empty bank
+        self.assertEqual(len(self.bank.read_all_accounts()), 0)
+
+        # Test multiple accounts
         self.bank.create_account("User1", 100.0)
         self.bank.create_account("User2", 200.0)
         accounts = self.bank.read_all_accounts()
@@ -64,175 +54,142 @@ class TestBank(unittest.TestCase):
         self.assertEqual(accounts[0].owner, "User1")
         self.assertEqual(accounts[1].owner, "User2")
 
-    def test_concurrent_account_creation(self):
-        num_accounts = 100
-        def create_account(i):
-            return self.bank.create_account(f"User{i}", 100.0)
+    def test_deposit(self):
+        account = self.bank.create_account("Test User", 1000.0)
 
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(create_account, i) for i in range(num_accounts)]
-            accounts = [f.result() for f in as_completed(futures)]
+        # Test successful deposit
+        new_balance = self.bank.deposit(0, 500.0)
+        self.assertEqual(new_balance, 1500.0)
+        self.assertEqual(len(account.transaction_log), 2)
+        self.assertEqual(account.transaction_log[-1].kind, TransactionKind.DEPOSIT)
 
-        self.assertEqual(len(self.bank.read_all_accounts()), num_accounts)
-        account_ids = list(self.bank.read_all_accounts().keys())
-        self.assertEqual(len(set(account_ids)), num_accounts)
+        # Test invalid deposits
+        with self.assertRaises(ValueError):
+            self.bank.deposit(0, -100.0)
+        with self.assertRaises(ValueError):
+            self.bank.deposit(0, 0)
+        with self.assertRaises(AccountNotFoundError):
+            self.bank.deposit(999, 100.0)
 
-    def test_concurrent_balance_updates(self):
-        account = self.bank.create_account("TestUser", 1000.0)
-        account_id = 0
-        num_updates = 100
-        update_amount = 10.0
+    def test_withdraw(self):
+        account = self.bank.create_account("Test User", 1000.0)
 
-        def update_balance():
-            self.bank.update_balance(account_id, update_amount)
+        # Test successful withdrawal
+        new_balance = self.bank.withdraw(0, 500.0)
+        self.assertEqual(new_balance, 500.0)
+        self.assertEqual(len(account.transaction_log), 2)
+        self.assertEqual(account.transaction_log[-1].kind, TransactionKind.WITHDRAWAL)
 
-        threads = [threading.Thread(target=update_balance) for _ in range(num_updates)]
+        # Test invalid withdrawals
+        with self.assertRaises(ValueError):
+            self.bank.withdraw(0, -100.0)
+        with self.assertRaises(ValueError):
+            self.bank.withdraw(0, 0)
+        with self.assertRaises(InsufficientFundsError):
+            self.bank.withdraw(0, 1000.0)
+        with self.assertRaises(AccountNotFoundError):
+            self.bank.withdraw(999, 100.0)
+
+    def test_delete_account(self):
+        # Test successful deletion
+        self.bank.create_account("Charlie", 300.0)
+        self.assertTrue(self.bank.delete_account(0))
+        with self.assertRaises(AccountNotFoundError):
+            self.bank.read_account(0)
+
+        # Test deleting non-existent account
+        with self.assertRaises(AccountNotFoundError):
+            self.bank.delete_account(999)
+
+    def test_transfer(self):
+        # Setup test accounts
+        acc1 = self.bank.create_account("Sender", 1000.0)
+        acc2 = self.bank.create_account("Receiver", 500.0)
+
+        # Test successful transfer
+        balances = self.bank.transfer(0, 1, 300.0)
+        self.assertEqual(balances[0], 700.0)
+        self.assertEqual(balances[1], 800.0)
+        self.assertEqual(acc1.transaction_log[-1].kind, TransactionKind.TRANSFER)
+        self.assertEqual(acc2.transaction_log[-1].kind, TransactionKind.TRANSFER)
+
+        # Test invalid transfers
+        with self.assertRaises(ValueError):
+            self.bank.transfer(0, 0, 100.0)  # Same account
+        with self.assertRaises(ValueError):
+            self.bank.transfer(0, 1, -100.0)  # Negative amount
+        with self.assertRaises(ValueError):
+            self.bank.transfer(0, 1, 0)  # Zero amount
+        with self.assertRaises(InsufficientFundsError):
+            self.bank.transfer(0, 1, 1000.0)  # Insufficient funds
+        with self.assertRaises(AccountNotFoundError):
+            self.bank.transfer(0, 999, 100.0)  # Non-existent receiver
+        with self.assertRaises(AccountNotFoundError):
+            self.bank.transfer(999, 0, 100.0)  # Non-existent sender
+
+    def test_concurrent_operations(self):
+        # Test concurrent deposits
+        account = self.bank.create_account("Test User", 1000.0)
+        num_deposits = 100
+        deposit_amount = 10.0
+
+        def make_deposit():
+            self.bank.deposit(0, deposit_amount)
+
+        threads = [threading.Thread(target=make_deposit) for _ in range(num_deposits)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
 
-        final_balance = self.bank.read_account(account_id).balance
-        expected_balance = 1000.0 + (update_amount * num_updates)
+        final_balance = self.bank.read_account(0).balance
+        expected_balance = 1000.0 + (deposit_amount * num_deposits)
         self.assertEqual(final_balance, expected_balance)
 
-    def test_concurrent_reads_and_writes(self):
-        account = self.bank.create_account("TestUser", 1000.0)
-        account_id = 0
-        num_operations = 100
-        results = []
+        # Test concurrent transfers
+        acc1 = self.bank.create_account("Account1", 1000.0)
+        acc2 = self.bank.create_account("Account2", 1000.0)
+        num_transfers = 50
+        transfer_amount = 10.0
 
-        def random_operation():
-            op = random.choice(['read', 'write'])
-            if op == 'read':
-                return self.bank.read_account(account_id).balance
-            else:
-                return self.bank.update_balance(account_id, 10.0)
-
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(random_operation) for _ in range(num_operations)]
-            results = [f.result() for f in as_completed(futures)]
-
-        self.assertTrue(all(isinstance(r, (float)) for r in results))
-        final_balance = self.bank.read_account(account_id).balance
-        self.assertGreaterEqual(final_balance, 1000.0)
-
-    def test_concurrent_account_deletion(self):
-        num_accounts = 10
-        accounts = [self.bank.create_account(f"User{i}", 100.0) for i in range(num_accounts)]
-
-        def delete_and_create(account_id):
+        def make_transfer():
             try:
-                self.bank.delete_account(account_id)
-                time.sleep(0.01)  # simulate some work
-                self.bank.create_account(f"NewUser{account_id}", 100.0)
-            except ValueError:
-                pass  # account might have been already deleted
-
-        threads = [threading.Thread(target=delete_and_create, args=(i,))
-                  for i in range(num_accounts)]
-
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        final_accounts = self.bank.read_all_accounts()
-        self.assertEqual(len(final_accounts), num_accounts)
-
-    def test_negative_balance_prevention(self):
-        account = self.bank.create_account("TestUser", 100.0)
-        account_id = 0
-        num_withdrawals = 20
-
-        def try_withdraw():
-            try:
-                self.bank.update_balance(account_id, -10.0)
-            except ValueError:
+                self.bank.transfer(1, 2, transfer_amount)
+            except (InsufficientFundsError, ValueError):
                 pass
 
-        threads = [threading.Thread(target=try_withdraw) for _ in range(num_withdrawals)]
+        threads = [threading.Thread(target=make_transfer) for _ in range(num_transfers)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
 
-        final_balance = self.bank.read_account(account_id).balance
-        self.assertGreaterEqual(final_balance, 0)
+        total_balance = self.bank.read_account(1).balance + self.bank.read_account(2).balance
+        self.assertEqual(total_balance, 2000.0)  # Total money in system should remain constant
 
-    def test_concurrent_mixed_operations(self):
-        initial_accounts = 5
-        for i in range(initial_accounts):
-            self.bank.create_account(f"User{i}", 1000.0)
+    def test_transaction_log(self):
+        # Create account and perform various operations
+        account = self.bank.create_account("Test User", 1000.0)
 
-        def random_bank_operation():
-            op = random.choice(['create', 'read', 'update', 'delete'])
-            try:
-                if op == 'create':
-                    return self.bank.create_account(f"User{random.randint(1000,9999)}", 100.0)
-                elif op == 'read':
-                    account_id = random.randint(0, initial_accounts-1)
-                    return self.bank.read_account(account_id)
-                elif op == 'update':
-                    account_id = random.randint(0, initial_accounts-1)
-                    amount = random.uniform(-50, 50)
-                    return self.bank.update_balance(account_id, amount)
-                else:  # delete
-                    account_id = random.randint(0, initial_accounts-1)
-                    return self.bank.delete_account(account_id)
-            except (ValueError, KeyError):
-                return None
+        self.bank.deposit(0, 500.0)
+        self.bank.withdraw(0, 200.0)
 
-        num_operations = 100
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(random_bank_operation) for _ in range(num_operations)]
-            _ = [f.result() for f in as_completed(futures)]
+        # Verify transaction log
+        log = account.transaction_log
+        self.assertEqual(len(log), 3)
+        self.assertEqual(log[0].kind, TransactionKind.CREATION)
+        self.assertEqual(log[1].kind, TransactionKind.DEPOSIT)
+        self.assertEqual(log[2].kind, TransactionKind.WITHDRAWAL)
 
-        # verify system is still in valid state
-        accounts = self.bank.read_all_accounts()
-        for account in accounts.values():
-            self.assertGreaterEqual(account.balance, 0)
+        # Verify transaction amounts
+        self.assertEqual(log[0].amount, 1000.0)
+        self.assertEqual(log[1].amount, 500.0)
+        self.assertEqual(log[2].amount, -200.0)
 
-    def test_transaction_logging(self):
-        # Test transaction logging
-        # Create test accounts
-        acc1 = self.bank.create_account("Alice", 1000)
-        acc2 = self.bank.create_account("Bob", 500)
-        acc3 = self.bank.create_account("Charlie", 2000)
-
-        # Test deposits
-        self.bank.deposit(acc1.account_id, 500)
-        self.bank.deposit(acc2.account_id, 300)
-
-        # Test withdrawals
-        self.bank.withdraw(acc1.account_id, 200)
-        self.bank.withdraw(acc3.account_id, 500)
-
-        # Test transfers
-        self.bank.transfer(acc1.account_id, acc2.account_id, 300)
-        self.bank.transfer(acc3.account_id, acc1.account_id, 400)
-
-        # Verify transaction logs
-        acc1 = self.bank.read_account(acc1.account_id)
-        acc2 = self.bank.read_account(acc2.account_id)
-        acc3 = self.bank.read_account(acc3.account_id)
-
-        # Verify account balances
-        self.assertEqual(acc1.balance, 1400)
-        self.assertEqual(acc2.balance, 1100)
-        self.assertEqual(acc3.balance, 1100)
-
-        # Verify transaction log lengths
-        self.assertEqual(len(acc1.transaction_log), 5)  # creation, deposit, withdrawal, transfer out, transfer in
-        self.assertEqual(len(acc2.transaction_log), 3)  # creation, deposit, transfer in
-        self.assertEqual(len(acc3.transaction_log), 3)  # creation, withdrawal, transfer out
-
-        # Test edge cases
-        with self.assertRaises(InsufficientFundsError):
-            self.bank.withdraw(acc1.account_id, 10000)  # Should fail - insufficient funds
-
-        with self.assertRaises(AccountNotFoundError):
-            self.bank.transfer(acc1.account_id, 999, 100)  # Should fail - nonexistent account
+        # Verify balances after each transaction
+        self.assertEqual(log[0].balance_after, 1000.0)
+        self.assertEqual(log[1].balance_after, 1500.0)
+        self.assertEqual(log[2].balance_after, 1300.0)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -194,3 +194,33 @@ class Bank:
             if "from_account" in locals():
                 from_account.balance += amount  # restore original balance
             raise ValueError(f"Transfer failed: {str(e)}")
+
+    def get_top_accounts_by_volume(self, k: int) -> list[tuple[int, float]]:
+        """Returns top K accounts by total transaction volume (deposits + withdrawals).
+        Returns list of tuples (account_id, volume) sorted by volume descending."""
+        if k <= 0:
+            raise ValueError("k must be positive")
+
+        account_volumes = []
+        for account_id, account in self.accounts.items():
+            volume = sum(abs(t.amount) for t in account.transaction_log)
+            account_volumes.append((account_id, volume))
+
+        return sorted(account_volumes, key=lambda x: x[1], reverse=True)[:k]
+
+    def get_top_accounts_by_outgoing(self, k: int) -> list[tuple[int, float]]:
+        """Returns top K accounts by total outgoing money (withdrawals + transfers out).
+        Returns list of tuples (account_id, outgoing_amount) sorted by amount descending."""
+        if k <= 0:
+            raise ValueError("k must be positive")
+
+        account_outgoing = []
+        for account_id, account in self.accounts.items():
+            outgoing = sum(
+                abs(t.amount) for t in account.transaction_log
+                if t.amount < 0 and t.kind in (TransactionKind.WITHDRAWAL,
+                                               TransactionKind.TRANSFER)
+            )
+            account_outgoing.append((account_id, outgoing))
+
+        return sorted(account_outgoing, key=lambda x: x[1], reverse=True)[:k]
